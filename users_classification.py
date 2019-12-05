@@ -1,4 +1,5 @@
 import collections
+import copy
 import json
 import os
 import re
@@ -25,56 +26,59 @@ PLANKTON_COMMENTS = "./cmt/plankton/"
 
 FREQUENCY_PATH = "./frequency/freq."
 
-USERS_PATH = ".users.dat"
-COMMENTS_PATH = ".comments.dat"
+USERS_PATH = "users.dat"
+COMMENTS_PATH = "comments.dat"
 
 
 class UsersClassification:
 
     def __init__(self, path="steem_first200"):
         download('stopwords')
-        self.blocks = parsing_blocks.parsing_blocks(path=path)
-        self.users = []
-        self.foreign_users: Set = set()
-        self.whale_users = []
-        self.shark_users = []
-        self.dolphin_users = []
-        self.minnow_users = []
-        self.plankton_users = []
-        self._lemmas = dict()
+        self.blocks: List[block_structure] = parsing_blocks.parsing_blocks(path=path)
+        self.users: List[user_structure.User] = []
+        self.foreign_users: Set[user_structure.User] = set()
+        self.whale_users: List[user_structure.User] = []
+        self.shark_users: List[user_structure.User] = []
+        self.dolphin_users: List[user_structure.User] = []
+        self.minnow_users: List[user_structure.User] = []
+        self.plankton_users: List[user_structure.User] = []
+        self._lemmas: Dict[str, List[str]] = dict()
         self._lemmas_for_categories: Dict[str, List[str]] = {"whale": [], "shark": [], "dolphin": [],
                                                              "minnow": [], "plankton": []}
-        self.word_net_lemmatizing = WordNetLemmatizer()
-        self._stop_words = set(chain.from_iterable(stop_words.get_stop_words(lang)
-                                                   for lang in stop_words.AVAILABLE_LANGUAGES))
+        self.word_net_lemmatizing: WordNetLemmatizer = WordNetLemmatizer()
+        self._stop_words: Set[str] = set(chain.from_iterable(stop_words.get_stop_words(lang)
+                                                             for lang in stop_words.AVAILABLE_LANGUAGES))
+        print("FINISHED INIT")
 
     @property
-    def whales(self):
+    def whales(self) -> List[user_structure.User]:
         return self.whale_users
 
     @property
-    def sharks(self):
+    def sharks(self) -> List[user_structure.User]:
         return self.shark_users
 
     @property
-    def dolphins(self):
+    def dolphins(self) -> List[user_structure.User]:
         return self.dolphin_users
 
     @property
-    def minnows(self):
+    def minnows(self) -> List[user_structure.User]:
         return self.minnow_users
 
     @property
-    def plankton(self):
+    def plankton(self) -> List[user_structure.User]:
         return self.plankton_users
 
     @property
-    def lemmas(self):
+    def lemmas(self) -> Dict[str, List[str]]:
         return self._lemmas_for_categories
 
     def users_initialize_from_blocks(self):
+        print("STARTED USERS INITIALIZATION")
         for b in self.blocks:
-            transactions = b.get_transactions()
+            transactions: List[block_structure.Transaction] = b.get_transactions()
+            print("INSIDE BLOCK")
             for t in transactions:
                 tops: block_structure.TransactionBlockStructure = t.get_transaction_block()
                 for o in tops.get_operations():
@@ -100,6 +104,7 @@ class UsersClassification:
                         for us in self.users:
                             if c.author == us.name:
                                 found = True
+                                print("FOUND")
                                 cmt = c.title + " " + c.body
                                 b = TextBlob(cmt)
                                 iso_code = b.detect_language()
@@ -110,19 +115,31 @@ class UsersClassification:
                                     break
                                 else:
                                     cmt = re.sub(r"[^a-zA-Z0-9:/.@()\[\]\-$? ]+", "", cmt)
+                                    cmt = re.sub(r"([\[\]()]+)", " ", cmt)
                                     cmt = self.remove_stopwords(cmt)
                                     lems = map(bytes.decode, self.lemmatize(cmt))
-                                    if us.name in self._lemmas:
-                                        self._lemmas[us.name] += list(lems)
-                                    else:
-                                        self._lemmas[us.name] = list(lems)
-                                    cmt = ' '.join(lems)
+                                    print("BEFORE COMMENT: " + cmt)
+                                    if us.name not in self._lemmas:
+                                        self._lemmas[us.name] = []
+                                    i = 0
+                                    print(len(list(lems)))
+                                    for _ in range(len(list(lems))):
+                                        el = yield next(lems)
+                                        self._lemmas[us.name].append(next(lems))
+                                        print(str(i) + ": " + str(len(list(lems))))
+                                        i += 1
+                                    print("MIDDLE: " + ' '.join(ln for ln in self._lemmas[us.name]))
+                                    tmp_lem = copy.deepcopy(list(lems))
+                                    cmt = ' '.join(tmp_lem)
+                                    print("LEN _LEMMAS AFTER: " + str(len(list(lems))))
+                                    print("AFTER COMMENT: " + cmt)
                                     us.comments.append(cmt)
                                     us.append_obtained_votes(c.weights_obtained)
                                     break
                         if not found and not foreign:
                             cmt = c.title + " " + c.body
                             cmt = re.sub(r"[^a-zA-Z0-9:/.@()\[\]\-$? ]+", "", cmt)
+                            cmt = re.sub(r"([\[\]()]+)", " ", cmt)
                             cmt = self.remove_stopwords(cmt)
                             lems = map(bytes.decode, self.lemmatize(cmt))
 
@@ -130,10 +147,7 @@ class UsersClassification:
                             us = user_structure.User(c.author)
                             us.comments.append(cmt)
                             us.append_obtained_votes(c.weights_obtained)
-                            if us.name in self._lemmas:
-                                self._lemmas[us.name] += list(lems)
-                            else:
-                                self._lemmas[us.name] = list(lems)
+                            self._lemmas[us.name] = list(lems)
                             self.users.append(us)
                     elif type(o) is block_structure.CustomJsonFollow:
                         f: block_structure.CustomJsonFollow = o
@@ -177,17 +191,21 @@ class UsersClassification:
                                 u2 = user_structure.User(tr.to_)
                                 u2.append_obtained_amount(tr.amount)
                                 self.users.append(u2)
+        return True
 
     # In this function there is the initialization of the fields of the users
     # steem power, reputation and reputation class and the removal of all the
     # stop words of all the words that are in the comments of the user
-    def users_classification(self, path="./accounts/accountsInfoNew.json"):
+    def users_classification(
+            self,
+            path="./accounts/accountsInfoNew.json"
+    ) -> None:
         print("Starting users classification")
         with open(path, 'r', encoding="UTF-8") as f:
             # The formula for calculating Steem Power is as follows:
             # total_vesting_fund_steem * (user's vesting_shares / total_vesting_shares)
             for line in f:
-                data = json.loads(line)
+                data: Dict[str, str] = json.loads(line)
                 for us in self.users:
                     if us.name.__eq__(data['name']):
                         us.set_reputation(data['reputation'])
@@ -197,39 +215,30 @@ class UsersClassification:
                             self.whale_users.append(us)
                             if us.name in self._lemmas:
                                 self._lemmas_for_categories["whale"] += self._lemmas[us.name]
-                            # else:
-                            #    self._lemmas_for_categories["whale"] = self._lemmas[us.name]
                         elif us.get_reputation_class() == "SHARK":
                             self.shark_users.append(us)
                             if us.name in self._lemmas:
                                 self._lemmas_for_categories["shark"] += self._lemmas[us.name]
-                            # else:
-                            #    self._lemmas_for_categories["shark"] = self._lemmas[us.name]
                         elif us.get_reputation_class() == "DOLPHIN":
                             self.dolphin_users.append(us)
                             if us.name in self._lemmas:
                                 self._lemmas_for_categories["dolphin"] += self._lemmas[us.name]
-                            # else:
-                            #    self._lemmas_for_categories["dolphin"] = self._lemmas[us.name]
                         elif us.get_reputation_class() == "MINNOW":
                             self.minnow_users.append(us)
                             if us.name in self._lemmas:
                                 self._lemmas_for_categories["minnow"] += self._lemmas[us.name]
-                            # else:
-                            #    self._lemmas_for_categories["minnow"] = self._lemmas[us.name]
                         elif us.get_reputation_class() == "PLANKTON":
                             self.plankton_users.append(us)
                             if us.name in self._lemmas:
                                 self._lemmas_for_categories["plankton"] += self._lemmas[us.name]
-                            # else:
-                            #    tmp = self._lemmas[us.name]
-                            #    self._lemmas_for_categories["plankton"] = tmp
+                                print("LEMMAS: " + str(len(self._lemmas[us.name])))
+                                print("LEMMAS_CAT: " + str(len(self._lemmas_for_categories["plankton"])))
                         else:
                             sys.stderr.write("ERROR: USER NOT CLASSIFIED")
                             return
                         self.users.remove(us)
-                        if us.name in self._lemmas:
-                            del self._lemmas[us.name]
+                        # if us.name in self._lemmas:
+                        #    del self._lemmas[us.name]
                         break
 
     @staticmethod
@@ -241,8 +250,9 @@ class UsersClassification:
                 f.write(''.join(us.name + "\n" for us in list_users))
             with open(path + COMMENTS_PATH, "w") as f:
                 for us in list_users:
-                    for cmt in us.get_comments():
-                        f.write(cmt + "\n")
+                    f.write(''.join(cmt + "\n" for cmt in us.get_comments()))
+                    # for cmt in us.get_comments():
+                    #    f.write(cmt + "\n")
                     f.write("\n")
                 f.write("\n")
 
@@ -252,18 +262,21 @@ class UsersClassification:
         if not os.path.exists(os.path.dirname(path)):
             os.makedirs(os.path.dirname(path))
         with open(path, 'w') as f:
-            for k, v in frequency:
-                f.write("(%s, %s) " % (k, v))
+            for k, v in frequency.items():
+                f.write("w: %s, \t\t\t fq: %s\n" % (k, v))
 
     def classification_write(self):
         print("Starting classification write")
-        self.write_on_file(WHALE_COMMENTS, self.whale_users)
-        self.write_on_file(SHARK_COMMENTS, self.shark_users)
-        self.write_on_file(DOLPHIN_COMMENTS, self.dolphin_users)
-        self.write_on_file(MINNOW_COMMENTS, self.minnow_users)
-        self.write_on_file(PLANKTON_COMMENTS, self.plankton_users)
+        self.write_on_file(WHALE_COMMENTS + "whale", self.whale_users)
+        self.write_on_file(SHARK_COMMENTS + "shark", self.shark_users)
+        self.write_on_file(DOLPHIN_COMMENTS + "dolphin", self.dolphin_users)
+        self.write_on_file(MINNOW_COMMENTS + "minnow", self.minnow_users)
+        self.write_on_file(PLANKTON_COMMENTS + "plankton", self.plankton_users)
         for k, v in self._lemmas_for_categories.items():
-            self.write_frequency(FREQUENCY_PATH + k + ".dat", collections.Counter(self._lemmas_for_categories[k]))
+            print("CAT: " + k)
+            c = collections.Counter(self._lemmas_for_categories[k])
+            print(c.most_common(10))
+            self.write_frequency(FREQUENCY_PATH + k + ".dat", c)
 
     def remove_stopwords(self, comment):
         comment = comment.lower()
@@ -288,9 +301,9 @@ class UsersClassification:
                 for word in cmt]
 
     def start_process(self, path_accounts):
-        self.users_initialize_from_blocks()
-        self.users_classification(path_accounts)
-        self.classification_write()
+        if self.users_initialize_from_blocks():
+            self.users_classification(path_accounts)
+            self.classification_write()
 
 
 if __name__ == '__main__':

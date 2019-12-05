@@ -543,7 +543,7 @@ class Transaction:
 
 
 class BlockStructure:
-    transactions = []
+    transactions: List[Transaction] = []
     timestamp = ""
     transaction_block = None
     witness_name = ""
