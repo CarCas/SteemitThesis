@@ -1,10 +1,11 @@
 import collections
-import copy
 import json
 import os
 import re
 import sys
+import string
 from typing import Set, List, Dict
+from collections import defaultdict
 
 import nltk
 import pycountry as pycountry
@@ -34,7 +35,7 @@ class UsersClassification:
 
     def __init__(self, path="steem_first200"):
         download('stopwords')
-        self.blocks: List[block_structure] = parsing_blocks.parsing_blocks(path=path)
+        self.blocks = parsing_blocks.parsing_blocks(path=path)
         self.users: List[user_structure.User] = []
         self.foreign_users: Set[user_structure.User] = set()
         self.whale_users: List[user_structure.User] = []
@@ -42,13 +43,13 @@ class UsersClassification:
         self.dolphin_users: List[user_structure.User] = []
         self.minnow_users: List[user_structure.User] = []
         self.plankton_users: List[user_structure.User] = []
-        self._lemmas: Dict[str, List[str]] = dict()
+
+        self._lemmas: Dict[str, List[str]] = defaultdict(list)
         self._lemmas_for_categories: Dict[str, List[str]] = {"whale": [], "shark": [], "dolphin": [],
                                                              "minnow": [], "plankton": []}
         self.word_net_lemmatizing: WordNetLemmatizer = WordNetLemmatizer()
         self._stop_words: Set[str] = set(chain.from_iterable(stop_words.get_stop_words(lang)
                                                              for lang in stop_words.AVAILABLE_LANGUAGES))
-        print("FINISHED INIT")
 
     @property
     def whales(self) -> List[user_structure.User]:
@@ -74,11 +75,10 @@ class UsersClassification:
     def lemmas(self) -> Dict[str, List[str]]:
         return self._lemmas_for_categories
 
-    def users_initialize_from_blocks(self):
-        print("STARTED USERS INITIALIZATION")
+    def users_initialize_from_blocks(self) -> None:
+        b: block_structure.BlockStructure
         for b in self.blocks:
-            transactions: List[block_structure.Transaction] = b.get_transactions()
-            print("INSIDE BLOCK")
+            transactions = b.get_transactions()
             for t in transactions:
                 tops: block_structure.TransactionBlockStructure = t.get_transaction_block()
                 for o in tops.get_operations():
@@ -104,50 +104,50 @@ class UsersClassification:
                         for us in self.users:
                             if c.author == us.name:
                                 found = True
-                                print("FOUND")
                                 cmt = c.title + " " + c.body
-                                b = TextBlob(cmt)
-                                iso_code = b.detect_language()
+                                blb = TextBlob(cmt)
+                                iso_code = blb.detect_language()
                                 if pycountry.languages.get(alpha_2=iso_code).name not in ("en", "eng", "English"):
                                     if c.author not in self.foreign_users:
                                         self.foreign_users.add(c.author)
                                         foreign = True
                                     break
                                 else:
-                                    cmt = re.sub(r"[^a-zA-Z0-9:/.@()\[\]\-$? ]+", "", cmt)
-                                    cmt = re.sub(r"([\[\]()]+)", " ", cmt)
+                                    subs = [(r"[^a-zA-Z0-9:/.@()\[\]\-$? ]+", ""), (r"([\[\]()]+)", " "),
+                                            (r"[\n\r]", " ")]
+                                    for old, new in subs:
+                                        cmt = re.sub(old, new, cmt)
+                                    translate_table = dict((ord(char), None) for char in string.punctuation)
                                     cmt = self.remove_stopwords(cmt)
-                                    lems = map(bytes.decode, self.lemmatize(cmt))
-                                    print("BEFORE COMMENT: " + cmt)
+                                    print("BEFORE: " + cmt)
+                                    cmt = cmt.translate(translate_table)
+                                    print("AFTER: " + cmt)
+                                    cmt = re.sub(" +", " ", cmt)
+                                    lems = [el for el in map(bytes.decode, self.lemmatize(cmt))]
                                     if us.name not in self._lemmas:
                                         self._lemmas[us.name] = []
-                                    i = 0
-                                    print(len(list(lems)))
-                                    for _ in range(len(list(lems))):
-                                        el = yield next(lems)
-                                        self._lemmas[us.name].append(next(lems))
-                                        print(str(i) + ": " + str(len(list(lems))))
-                                        i += 1
-                                    print("MIDDLE: " + ' '.join(ln for ln in self._lemmas[us.name]))
-                                    tmp_lem = copy.deepcopy(list(lems))
-                                    cmt = ' '.join(tmp_lem)
-                                    print("LEN _LEMMAS AFTER: " + str(len(list(lems))))
-                                    print("AFTER COMMENT: " + cmt)
-                                    us.comments.append(cmt)
+                                    for el in lems:
+                                        self._lemmas[us.name].append(el)
+                                    us.comments.append(' '.join(lems))
                                     us.append_obtained_votes(c.weights_obtained)
                                     break
                         if not found and not foreign:
                             cmt = c.title + " " + c.body
-                            cmt = re.sub(r"[^a-zA-Z0-9:/.@()\[\]\-$? ]+", "", cmt)
-                            cmt = re.sub(r"([\[\]()]+)", " ", cmt)
+                            subs = [(r"[^a-zA-Z0-9:/.@()\[\]\-$? ]+", ""), (r"([\[\]()]+)", " "),
+                                    (r"[\n\r]", " "), (" +", " ")]
+                            for old, new in subs:
+                                cmt = re.sub(old, new, cmt)
+                            translate_table = dict((ord(char), None) for char in string.punctuation)
                             cmt = self.remove_stopwords(cmt)
-                            lems = map(bytes.decode, self.lemmatize(cmt))
-
+                            print("BEFORE: " + cmt)
+                            cmt = cmt.translate(translate_table)
+                            print("AFTER: " + cmt)
+                            lems = [el for el in map(bytes.decode, self.lemmatize(cmt))]
                             cmt = ' '.join(lems)
                             us = user_structure.User(c.author)
                             us.comments.append(cmt)
                             us.append_obtained_votes(c.weights_obtained)
-                            self._lemmas[us.name] = list(lems)
+                            self._lemmas[us.name] = lems
                             self.users.append(us)
                     elif type(o) is block_structure.CustomJsonFollow:
                         f: block_structure.CustomJsonFollow = o
@@ -191,7 +191,6 @@ class UsersClassification:
                                 u2 = user_structure.User(tr.to_)
                                 u2.append_obtained_amount(tr.amount)
                                 self.users.append(u2)
-        return True
 
     # In this function there is the initialization of the fields of the users
     # steem power, reputation and reputation class and the removal of all the
@@ -200,7 +199,6 @@ class UsersClassification:
             self,
             path="./accounts/accountsInfoNew.json"
     ) -> None:
-        print("Starting users classification")
         with open(path, 'r', encoding="UTF-8") as f:
             # The formula for calculating Steem Power is as follows:
             # total_vesting_fund_steem * (user's vesting_shares / total_vesting_shares)
@@ -231,14 +229,12 @@ class UsersClassification:
                             self.plankton_users.append(us)
                             if us.name in self._lemmas:
                                 self._lemmas_for_categories["plankton"] += self._lemmas[us.name]
-                                print("LEMMAS: " + str(len(self._lemmas[us.name])))
-                                print("LEMMAS_CAT: " + str(len(self._lemmas_for_categories["plankton"])))
                         else:
                             sys.stderr.write("ERROR: USER NOT CLASSIFIED")
                             return
                         self.users.remove(us)
-                        # if us.name in self._lemmas:
-                        #    del self._lemmas[us.name]
+                        if us.name in self._lemmas:
+                            del self._lemmas[us.name]
                         break
 
     @staticmethod
@@ -251,8 +247,6 @@ class UsersClassification:
             with open(path + COMMENTS_PATH, "w") as f:
                 for us in list_users:
                     f.write(''.join(cmt + "\n" for cmt in us.get_comments()))
-                    # for cmt in us.get_comments():
-                    #    f.write(cmt + "\n")
                     f.write("\n")
                 f.write("\n")
 
@@ -282,7 +276,6 @@ class UsersClassification:
         comment = comment.lower()
         for s in self._stop_words:
             comment = re.sub(r"\b" + s.lower() + r"\b", '', comment)
-        comment = re.sub(" +", " ", comment)
         return comment
 
     @staticmethod
@@ -293,7 +286,6 @@ class UsersClassification:
         return tag_dict.get(tag, wordnet.NOUN)
 
     def lemmatize(self, comment):
-        # cmt = nltk.word_tokenize(comment)
         cmt = comment.split()
         return [self.word_net_lemmatizing
                     .lemmatize(word)
@@ -301,9 +293,9 @@ class UsersClassification:
                 for word in cmt]
 
     def start_process(self, path_accounts):
-        if self.users_initialize_from_blocks():
-            self.users_classification(path_accounts)
-            self.classification_write()
+        self.users_initialize_from_blocks()
+        self.users_classification(path_accounts)
+        self.classification_write()
 
 
 if __name__ == '__main__':

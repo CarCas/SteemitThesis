@@ -41,6 +41,20 @@ class Comment:
         self.permlink = permlink
         self.title = title
         self.body = body
+        self.urls = []
+        if self.body is not "":
+            index = 0
+            while index < len(self.body):
+                starturl = self.body.find("http")
+                if starturl != -1:
+                    endurl = self.body.find(" ", starturl)
+                    if endurl == -1:
+                        endurl = len(self.body) - 1
+                    self.urls.append(self.body[starturl:endurl])
+                    self.body = self.body[:starturl] + self.body[endurl + 1:]
+                    index = starturl + 1
+                else:
+                    index = len(self.body)
         self.json_metadata = json_metadata
 
     def get_votes(self):
